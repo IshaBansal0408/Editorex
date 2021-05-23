@@ -39,7 +39,4 @@ dependencies {
 
     implementation 'com.airbnb.android:lottie:3.4.1'
 
-    implementation 'com.github.User:Repo:Tag'
-
-
 }

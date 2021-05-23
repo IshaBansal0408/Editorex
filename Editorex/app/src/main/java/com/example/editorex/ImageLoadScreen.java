@@ -1,28 +1,33 @@
 package com.example.editorex;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
-
 import android.Manifest;
 import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.ColorMatrix;
 import android.graphics.ColorMatrixColorFilter;
+import android.graphics.Paint;
 import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.renderscript.Allocation;
+import android.renderscript.Element;
+import android.renderscript.RenderScript;
+import android.renderscript.ScriptIntrinsicBlur;
 import android.util.Log;
 import android.view.View;
 import android.webkit.MimeTypeMap;
@@ -32,6 +37,7 @@ import android.widget.Toast;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.IntBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
@@ -43,10 +49,6 @@ public class ImageLoadScreen extends AppCompatActivity {
     ImageView selectedImage;
     Button cameraBtn,galleryBtn,bW_button,Sk_Button,color_button;
     String currentPhotoPath;
-
-    Drawable drawable;
-    Bitmap bitmap;
-
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -98,10 +100,148 @@ public class ImageLoadScreen extends AppCompatActivity {
         });
 
         Sk_Button.setOnClickListener(new View.OnClickListener() {
+
+
+            @RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN_MR1)
             @Override
             public void onClick(View v) {
+                selectedImage.setDrawingCacheEnabled(true);
+
+                selectedImage.destroyDrawingCache();
+                selectedImage.buildDrawingCache();
+
+                Bitmap InputBitmap = selectedImage.getDrawingCache();
+                Bitmap ResultBitmap = Changetosketch(InputBitmap);
+                selectedImage.setImageBitmap(ResultBitmap);
+            }
+
+            @RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN_MR1)
+            private Bitmap Changetosketch(Bitmap bmp) {
+                Bitmap Copy,Invert,Result,B_invert;
+                Copy =bmp;
+                Copy = toGrayscale(Copy);
+                Invert = createInvertedBitmap(Copy);
+                B_invert = blur(ImageLoadScreen.this,Invert);
+                Result = ColorDodgeBlend(B_invert, Copy);
+
+                return Result;
+            }
+
+            @RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN_MR1)
+            private Bitmap blur(ImageLoadScreen ctx, Bitmap image) {
+                float BITMAP_SCALE = 0.4f;
+                float BLUR_RADIUS = 4.5f;
+                Bitmap photo = image.copy(Bitmap.Config.ARGB_8888, true);
+
+                try {
+                    final RenderScript rs = RenderScript.create( ctx );
+                    final Allocation input = Allocation.createFromBitmap(rs, photo, Allocation.MipmapControl.MIPMAP_NONE, Allocation.USAGE_SCRIPT);
+                    final Allocation output = Allocation.createTyped(rs, input.getType());
+                    final ScriptIntrinsicBlur script = ScriptIntrinsicBlur.create(rs, Element.U8_4(rs));
+                    script.setRadius( BLUR_RADIUS ); /* e.g. 3.f */
+                    script.setInput( input );
+                    script.forEach( output );
+                    output.copyTo( photo );
+                }catch (Exception e){
+                    e.printStackTrace();
+                }
+                return photo;
+            }
+
+            private Bitmap ColorDodgeBlend(Bitmap source, Bitmap layer) {
+                Bitmap base = source.copy(Bitmap.Config.ARGB_8888, true);
+                Bitmap blend = layer.copy(Bitmap.Config.ARGB_8888, false);
+
+                IntBuffer buffBase = IntBuffer.allocate(base.getWidth() * base.getHeight());
+                base.copyPixelsToBuffer(buffBase);
+                buffBase.rewind();
+
+                IntBuffer buffBlend = IntBuffer.allocate(blend.getWidth() * blend.getHeight());
+                blend.copyPixelsToBuffer(buffBlend);
+                buffBlend.rewind();
+
+                IntBuffer buffOut = IntBuffer.allocate(base.getWidth() * base.getHeight());
+                buffOut.rewind();
+
+                while (buffOut.position() < buffOut.limit()) {
+
+                    int filterInt = buffBlend.get();
+                    int srcInt = buffBase.get();
+
+                    int redValueFilter = Color.red(filterInt);
+                    int greenValueFilter = Color.green(filterInt);
+                    int blueValueFilter = Color.blue(filterInt);
+
+                    int redValueSrc = Color.red(srcInt);
+                    int greenValueSrc = Color.green(srcInt);
+                    int blueValueSrc = Color.blue(srcInt);
+
+                    int redValueFinal = colordodge(redValueFilter, redValueSrc);
+                    int greenValueFinal = colordodge(greenValueFilter, greenValueSrc);
+                    int blueValueFinal = colordodge(blueValueFilter, blueValueSrc);
+
+
+                    int pixel = Color.argb(255, redValueFinal, greenValueFinal, blueValueFinal);
+
+
+                    buffOut.put(pixel);
+                }
+
+                buffOut.rewind();
+
+                base.copyPixelsFromBuffer(buffOut);
+                blend.recycle();
+
+                return base;
 
             }
+            private int colordodge(int in1, int in2) {
+                float image = (float)in2;
+                float mask = (float)in1;
+                return ((int) ((image == 255) ? image:Math.min(255, (((long)mask << 8 ) / (255 - image)))));
+            }
+
+            private Bitmap createInvertedBitmap(Bitmap src) {
+                ColorMatrix colorMatrix_Inverted =
+                        new ColorMatrix(new float[] {
+                                -1,  0,  0,  0, 255,
+                                0, -1,  0,  0, 255,
+                                0,  0, -1,  0, 255,
+                                0,  0,  0,  1,   0});
+
+                ColorFilter ColorFilter_Sepia = new ColorMatrixColorFilter(
+                        colorMatrix_Inverted);
+
+                Bitmap bitmap = Bitmap.createBitmap(src.getWidth(), src.getHeight(),
+                        Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(bitmap);
+
+                Paint paint = new Paint();
+
+                paint.setColorFilter(ColorFilter_Sepia);
+                canvas.drawBitmap(src, 0, 0, paint);
+
+                return bitmap;
+
+            }
+
+            private Bitmap toGrayscale(Bitmap bmpOriginal) {
+
+                int width, height;
+                height = bmpOriginal.getHeight();
+                width = bmpOriginal.getWidth();
+
+                Bitmap bmpGrayscale = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
+                Canvas c = new Canvas(bmpGrayscale);
+                Paint paint = new Paint();
+                ColorMatrix cm = new ColorMatrix();
+                cm.setSaturation(0);
+                ColorMatrixColorFilter f = new ColorMatrixColorFilter(cm);
+                paint.setColorFilter(f);
+                c.drawBitmap(bmpOriginal, 0, 0, paint);
+                return bmpGrayscale;
+            }
+
         });
 
     }
